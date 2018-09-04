@@ -6,6 +6,7 @@
 #include "box.h"
 #include "demo.h"
 #include "option_list.h"
+#include <unistd.h>
 
 #ifdef OPENCV
 #include "opencv2/highgui/highgui_c.h"
@@ -345,7 +346,6 @@ void validate_detector(char *datacfg, char *cfgfile, char *weightfile, char *out
 
     layer l = net.layers[net.n - 1];
     int classes = l.classes;
-
     char buff[1024];
     char *type = option_find_str(options, "eval", "voc");
     FILE *fp = 0;
@@ -556,6 +556,7 @@ void validate_detector_map(char *datacfg, char *cfgfile, char *weightfile, float
     char *valid_images = option_find_str(options, "valid", "data/train.txt");
     char *difficult_valid_images = option_find_str(options, "difficult", NULL);
     char *name_list = option_find_str(options, "names", "data/names.list");
+    char *prefix = option_find_str(options, "results", "results");
     char **names = get_labels(name_list);
     char *mapf = option_find_str(options, "map", 0);
     int *map = 0;
@@ -610,6 +611,9 @@ void validate_detector_map(char *datacfg, char *cfgfile, char *weightfile, float
     float avg_iou = 0;
     int tp_for_thresh = 0;
     int fp_for_thresh = 0;
+
+    int mat[classes][classes+1]; // partial confusion matrix; mat[i][j], i: detection [any class], j: truth [any class + negative]
+    for(int j = 0; j < classes + 1; ++j) for(int i = 0; i < classes; ++i) mat[i][j] = 0;
 
     box_prob *detections = calloc(1, sizeof(box_prob));
     int detections_count = 0;
@@ -675,8 +679,20 @@ void validate_detector_map(char *datacfg, char *cfgfile, char *weightfile, float
 
             const int checkpoint_detections_count = detections_count;
 
+
+//            printf("\nimage index: %d\n", image_index);
+
+
+//          For each detected bounding box, i
             for (i = 0; i < nboxes; ++i) {
 
+//                printf("    detection index: %d   p: ", i);
+//                for (int class_id = 0; class_id < classes; ++class_id) {
+//                    printf("%1.3f ", dets[i].prob[class_id]);
+//                }
+//                printf("\n");
+
+//              For each class, class_id
                 int class_id;
                 for (class_id = 0; class_id < classes; ++class_id) {
                     float prob = dets[i].prob[class_id];
@@ -690,20 +706,35 @@ void validate_detector_map(char *datacfg, char *cfgfile, char *weightfile, float
                         detections[detections_count - 1].truth_flag = 0;
                         detections[detections_count - 1].unique_truth_index = -1;
 
+//                      For each truth label, j
+                        int found_iou_match = 0;
                         int truth_index = -1;
                         float max_iou = 0;
                         for (j = 0; j < num_labels; ++j)
                         {
                             box t = { truth[j].x, truth[j].y, truth[j].w, truth[j].h };
-                            //printf(" IoU = %f, prob = %f, class_id = %d, truth[j].id = %d \n",
-                            //    box_iou(dets[i].bbox, t), prob, class_id, truth[j].id);
+
                             float current_iou = box_iou(dets[i].bbox, t);
                             if (current_iou > iou_thresh && class_id == truth[j].id) {
                                 if (current_iou > max_iou) {
                                     max_iou = current_iou;
                                     truth_index = unique_truth_count + j;
+
                                 }
                             }
+                            if (current_iou > iou_thresh && prob > thresh_calc_avg_iou){
+                                found_iou_match = 1;
+                                mat[class_id][truth[j].id] += 1;
+//                                printf("        det: %d, truth: %d  IoU: %1.3f, prob: %1.3f\n",
+//                                       class_id, truth[j].id, current_iou, prob);
+                            }
+                        }
+
+                        if(found_iou_match == 0 && prob > thresh_calc_avg_iou)
+                        {
+                            mat[class_id][classes] += 1;
+//                            printf("        det: %d, truth: N  IoU: 0.000, prob: %1.3f\n", class_id, prob);
+
                         }
 
                         // best IoU
@@ -712,6 +743,8 @@ void validate_detector_map(char *datacfg, char *cfgfile, char *weightfile, float
                             detections[detections_count - 1].unique_truth_index = truth_index;
                         }
                         else {
+
+
                             // if object is difficult then remove detection
                             for (j = 0; j < num_labels_dif; ++j) {
                                 box t = { truth_dif[j].x, truth_dif[j].y, truth_dif[j].w, truth_dif[j].h };
@@ -828,7 +861,7 @@ void validate_detector_map(char *datacfg, char *cfgfile, char *weightfile, float
 
 
     double mean_average_precision = 0;
-
+    float avg_precision_per_class[classes];
     for (i = 0; i < classes; ++i) {
         double avg_precision = 0;
         int point;
@@ -848,7 +881,8 @@ void validate_detector_map(char *datacfg, char *cfgfile, char *weightfile, float
             avg_precision += cur_precision;
         }
         avg_precision = avg_precision / 11;
-        printf("class_id = %d, name = %s, \t ap = %2.2f %% \n", i, names[i], avg_precision*100);
+        avg_precision_per_class[i] = avg_precision;
+        printf("class_id = %d, name = %s, \t ap = %2.2f %% \n", i, names[i], avg_precision_per_class[i]*100);
         mean_average_precision += avg_precision;
     }
 
@@ -864,6 +898,17 @@ void validate_detector_map(char *datacfg, char *cfgfile, char *weightfile, float
     mean_average_precision = mean_average_precision / classes;
     printf("\n mean average precision (mAP) = %f, or %2.2f %% \n", mean_average_precision, mean_average_precision*100);
 
+    printf("\n partial confusion matrix. rows: true class (plus negative), columns: detected class\n");
+
+    printf("[\n");
+    for(int j = 0; j < classes + 1; ++j) {
+        printf("[");
+        for(int i = 0; i < classes; ++i) {
+            printf("%d, ", mat[i][j]);
+        }
+        printf("],\n");
+    }
+    printf("]\n");
 
     for (i = 0; i < classes; ++i) {
         free(pr[i]);
@@ -874,6 +919,39 @@ void validate_detector_map(char *datacfg, char *cfgfile, char *weightfile, float
 
     fprintf(stderr, "Total Detection Time: %f Seconds\n", (double)(time(0) - start));
     if (reinforcement_fd != NULL) fclose(reinforcement_fd);
+
+
+    char output_filename_metrics[1024], output_filename_confusion_mat[1024];
+    FILE *output_file_metrics, *output_file_confusion_mat;
+
+    snprintf(output_filename_metrics, 1024, "%s/%s.csv", prefix, "metrics");
+    if( access( output_filename_metrics, F_OK ) != -1 ) {
+        // file exists, open in append mode in order to add new lines
+        output_file_metrics = fopen(output_filename_metrics, "a");
+    } else {
+        // file doesn't exist, write header
+        output_file_metrics = fopen(output_filename_metrics, "w");
+        for(int i = 0; i < classes; ++i) fprintf (output_file_metrics, "%s average precision, ", names[i]);
+        fprintf (output_file_metrics, "thresh, precision, recall, F1 score, avg IoU, mAP, ");
+        fprintf (output_file_metrics, "detections count, unique truth count, TP, FP, FN\n");
+    }
+
+    for(int i = 0; i < classes; ++i) fprintf (output_file_metrics, "%f, ", avg_precision_per_class[i]);
+
+    fprintf (output_file_metrics, "%f, %f, %f, %f, %f, %f, ",
+             thresh_calc_avg_iou, cur_precision, cur_recall, f1_score, avg_iou, mean_average_precision);
+
+    fprintf (output_file_metrics, "%d, %d, %d, %d, %d\n",
+             detections_count, unique_truth_count, tp_for_thresh, fp_for_thresh, unique_truth_count - tp_for_thresh);
+
+    fclose (output_file_metrics);
+
+    snprintf(output_filename_confusion_mat, 1024, "%s/%s.csv", prefix, "confusion_mat");
+    output_file_confusion_mat = fopen(output_filename_confusion_mat, "a");
+
+//    TODO
+    fclose (output_file_confusion_mat);
+
 }
 
 #ifdef OPENCV
