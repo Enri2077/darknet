@@ -5,6 +5,7 @@ OPENCV=1
 AVX=0
 OPENMP=0
 LIBSO=1
+VIS_FEATURE_MAPS=1
 
 # set GPU=1 and CUDNN=1 to speedup on GPU
 # set CUDNN_HALF=1 to further speedup 3 x times (Mixed-precision using Tensor Cores) on GPU Tesla V100, Titan V, DGX-2
@@ -77,7 +78,7 @@ endif
 
 ifeq ($(GPU), 1)
 COMMON+= -DGPU -I/usr/local/cuda/include/
-CFLAGS+= -DGPU
+CFLAGS+= -DGPU -DVIS_FEATURE_MAPS
 ifeq ($(OS),Darwin) #MAC
 LDFLAGS+= -L/usr/local/cuda/lib -lcuda -lcudart -lcublas -lcurand
 else
