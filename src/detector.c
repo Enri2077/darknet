@@ -924,12 +924,15 @@ void validate_detector_map(char *datacfg, char *cfgfile, char *weightfile, float
     char output_filename_metrics[1024], output_filename_confusion_mat[1024];
     FILE *output_file_metrics, *output_file_confusion_mat;
 
-    snprintf(output_filename_metrics, 1024, "%s/%s.csv", prefix, "metrics");
+    snprintf(output_filename_metrics, 1024, "%s.csv", "metrics");
+    
     if( access( output_filename_metrics, F_OK ) != -1 ) {
         // file exists, open in append mode in order to add new lines
+        printf("Saving results in %s", output_filename_metrics);
         output_file_metrics = fopen(output_filename_metrics, "a");
     } else {
         // file doesn't exist, write header
+        printf("Adding results to %s", output_filename_metrics);
         output_file_metrics = fopen(output_filename_metrics, "w");
         for(int i = 0; i < classes; ++i) fprintf (output_file_metrics, "%s average precision, ", names[i]);
         fprintf (output_file_metrics, "thresh, precision, recall, F1 score, avg IoU, mAP, ");
@@ -946,11 +949,11 @@ void validate_detector_map(char *datacfg, char *cfgfile, char *weightfile, float
 
     fclose (output_file_metrics);
 
-    snprintf(output_filename_confusion_mat, 1024, "%s/%s.csv", prefix, "confusion_mat");
-    output_file_confusion_mat = fopen(output_filename_confusion_mat, "a");
-
+//    snprintf(output_filename_confusion_mat, 1024, "%s.csv", "confusion_mat");
+//    output_file_confusion_mat = fopen(output_filename_confusion_mat, "a");
+//
 //    TODO
-    fclose (output_file_confusion_mat);
+//    fclose (output_file_confusion_mat);
 
 }
 
